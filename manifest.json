@@ -1,0 +1,15 @@
+{
+  "name": "單據記錄器",
+  "short_name": "單據回報",
+  "description": "拍單據 · 活表單自訂欄位 · 本機儲存 · 一鍵回報",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3ede1",
+  "theme_color": "#a96f33",
+  "lang": "zh-Hant",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
