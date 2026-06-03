@@ -138,6 +138,12 @@
   .lblrow label{margin:0}
   .ocrbtn{margin-left:auto;font:600 12px var(--sans);color:var(--terra2);background:#f6ecdd;border:1.5px solid #e2c79c;border-radius:9px;padding:6px 11px;cursor:pointer;white-space:nowrap}
   .ocrbtn:active{background:#eaddc6}
+  .scanbtn{width:100%;margin-top:10px;font:700 14px var(--sans);color:#fff;
+    background:linear-gradient(135deg,#a96f33,#c98a45);border:0;border-radius:12px;padding:13px;cursor:pointer;
+    box-shadow:0 4px 14px rgba(169,111,51,.3);display:flex;align-items:center;justify-content:center;gap:7px}
+  .scanbtn:active{filter:brightness(.95)}
+  .scanbtn:disabled{background:#d8cdb8;box-shadow:none;cursor:default}
+  .scanbtn.busy{background:#bfa06f}
 
   .photobtns{display:flex;gap:9px;margin-bottom:10px}
   .photobtns label{flex:1;text-align:center;font:600 14px var(--sans);color:var(--terra2);
@@ -222,6 +228,7 @@
       <button id="menuBtn" class="tbBtn" aria-label="Menu">⋯</button>
       <div class="pop" id="menuPop">
         <button id="editSchema" data-i18n="m_schema">🧩 編輯欄位（活表單）</button>
+        <button id="ocrSetup" data-i18n="m_ocr_setup">☁️ 雲端辨識設定</button>
         <div class="sep"></div>
         <button id="sendReport" data-i18n="m_send">📤 送出回報到 nedhuang</button>
         <button id="expHtml" data-i18n="m_expHtml">📄 匯出 HTML 報告（含照片）</button>
@@ -253,6 +260,7 @@
       <label><span data-i18n="btn_lib">🖼 相簿</span><input type="file" accept="image/*" multiple id="fLib"></label>
     </div>
     <div class="thumbs" id="thumbs"></div>
+    <button type="button" class="scanbtn" id="btnScan" data-i18n="btn_scan">✨ 雲端辨識 → 自動填欄位</button>
   </div>
   <div id="formFields"></div>
   <div class="field">
@@ -310,6 +318,28 @@
   </div>
 </div>
 
+<!-- 雲端辨識設定（Worker URL 存 localStorage，不進 public repo） -->
+<div class="sheet" id="ocrSheet">
+  <div class="grip"></div>
+  <h2 data-i18n="ocr_set_title">雲端辨識設定<span class="sub" data-i18n="ocr_set_sub">拍一張自動填</span></h2>
+  <p class="fnote" data-i18n="ocr_set_note">貼上你的 Cloudflare Worker 網址。拍照後按「✨ 雲端辨識」會把照片送去讀圖、依目前欄位自動填。網址只存在這支手機，不會進公開原始碼。</p>
+  <div class="field">
+    <label data-i18n="ocr_url_label">Worker 網址</label>
+    <input class="inp" id="ocrUrl" type="url" inputmode="url" autocapitalize="off" placeholder="https://receipt-ocr.xxx.workers.dev">
+  </div>
+  <div class="field">
+    <label data-i18n="ocr_model_label">辨識模型</label>
+    <select class="inp" id="ocrModel">
+      <option value="haiku" data-i18n="ocr_model_haiku">Haiku（快·便宜，建議先用）</option>
+      <option value="sonnet" data-i18n="ocr_model_sonnet">Sonnet（更準·稍貴）</option>
+    </select>
+  </div>
+  <div class="acts">
+    <button class="cancel" id="ocrCancel" data-i18n="btn_cancel">取消</button>
+    <button class="save" id="ocrSave" data-i18n="btn_save">儲存</button>
+  </div>
+</div>
+
 <div class="lb" id="lb">
   <button class="x" id="lbX">×</button>
   <img id="lbImg" alt="">
@@ -340,6 +370,15 @@ const STR = {
     btn_ocr:'📋 貼上 OCR 並解析',
     ocr_filled:'已從 OCR 帶入：', ocr_parsed_nofill:'已貼上文字，金額/日期沒抓到、請手動校填',
     ocr_none:'剪貼簿沒有文字，可長按貼到下框再按一次', ocr_review:'（OCR 為輔助，務必核對金額）',
+    m_ocr_setup:'☁️ 雲端辨識設定',
+    ocr_set_title:'雲端辨識設定', ocr_set_sub:'拍一張自動填',
+    ocr_set_note:'貼上你的 Cloudflare Worker 網址。拍照後按「✨ 雲端辨識」會把照片送去讀圖、依目前欄位自動填。網址只存在這支手機，不會進公開原始碼。',
+    ocr_url_label:'Worker 網址', ocr_model_label:'辨識模型',
+    ocr_model_haiku:'Haiku（快·便宜，建議先用）', ocr_model_sonnet:'Sonnet（更準·稍貴）',
+    btn_scan:'✨ 雲端辨識 → 自動填欄位',
+    ocr_need_setup:'先到 ⋯ 設定雲端辨識 Worker 網址', ocr_need_photo:'先拍一張單據照片',
+    ocr_scanning:'辨識中…（送雲端讀圖，約幾秒）', ocr_done_nofill:'辨識完成，但沒抓到可填的欄位',
+    ocr_fail:'辨識失敗：', ocr_saved:'已儲存雲端辨識設定', ocr_cleared:'已清除雲端辨識設定',
     btn_cancel:'取消', btn_del:'刪除', btn_save:'儲存',
     schema_title:'編輯欄位', schema_sub:'這張表單是活的',
     schema_note:'照片、拍照時間、原始文字是每筆固定內建。下面是你自訂的欄位 —— 增刪改、調順序都會即時存本機。',
@@ -559,6 +598,7 @@ function fillForm(){
   $('#btnDel').hidden = !draft.id;
   $('#sheetTitle').firstChild.textContent = t(draft.id?'f_edit':'f_new');
   $('#sheetTs').textContent = draft.createdAt ? tsText(draft.createdAt) : tsText(Date.now());
+  setScanBusy(false);
 }
 function openSheet(){fillForm();$('#scrim').classList.add('on');$('#sheet').classList.add('on');}
 function closeSheet(){$('#scrim').classList.remove('on');$('#sheet').classList.remove('on');draft=null;render();}
@@ -816,6 +856,60 @@ async function pasteAndParseOCR(){
   else toast(t('ocr_none'));
 }
 
+/* ════════════════════════ 雲端辨識（拍照 → Worker/AI Gateway → Claude vision 依 schema 回欄位 → 自動填） ════════════════════════ */
+const ocrUrl = () => (localStorage.getItem('rcptlog-ocr-url')||'').trim();
+const ocrModel = () => localStorage.getItem('rcptlog-ocr-model')||'haiku';
+function setScanBusy(b){const el=$('#btnScan');if(!el)return;el.disabled=b;el.classList.toggle('busy',b);el.textContent=b?t('ocr_scanning'):t('btn_scan');}
+async function cloudOCR(blob){
+  const url=ocrUrl();
+  if(!url){toast(t('ocr_need_setup'));openOcrSettings();return;}
+  setScanBusy(true);
+  try{
+    const dataUrl=await b2d(blob);
+    const base64=dataUrl.split(',')[1];
+    const media_type=(dataUrl.match(/^data:(.*?);/)||[])[1]||'image/jpeg';
+    /* 把當前 schema 一起送（engine/domain 分離：OCR 依使用者欄位抽，回 key=fid） */
+    const schema=state.schema.map(f=>({fid:f.fid,label:f.label,type:f.type,options:f.options||undefined}));
+    const resp=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({image:base64,media_type,model:ocrModel(),schema})});
+    if(!resp.ok){const e=await resp.text().catch(()=>'');throw new Error('HTTP '+resp.status+(e?' · '+e.slice(0,100):''));}
+    const data=await resp.json();
+    applyCloudOCR(data.values||{}, data.rawText||'');
+  }catch(e){__logErr('ocr:'+(e&&e.message));toast(t('ocr_fail')+((e&&e.message)||''));}
+  finally{setScanBusy(false);}
+}
+/* 雲端回結構化 {values:{fid:value}, rawText}：認 fid 填第一個空格（money 清成數字） */
+function applyCloudOCR(values,rawText){
+  if(!draft) return {filled:[]};
+  const filled=[];
+  state.schema.forEach(f=>{
+    const v=values[f.fid];
+    if(v==null||String(v).trim()==='')return;
+    const el=document.querySelector('#formFields [data-fid="'+f.fid+'"]');
+    if(!el||el.value)return;
+    el.value = f.type==='money'? String(toNum(v)) : String(v);
+    filled.push(f.label);
+  });
+  if(rawText){const cur=$('#fRaw').value.trim();$('#fRaw').value=(cur?cur+'\n':'')+rawText;draft.rawText=$('#fRaw').value;}
+  toast(filled.length? t('ocr_filled')+filled.join('、'):t('ocr_done_nofill'));
+  return {filled};
+}
+function scanPhoto(){
+  if(!draft||!draft.photos.length){toast(t('ocr_need_photo'));return;}
+  cloudOCR(draft.photos[draft.photos.length-1]);
+}
+function openOcrSettings(){
+  $('#menuPop').classList.remove('on');
+  $('#ocrUrl').value=ocrUrl(); $('#ocrModel').value=ocrModel();
+  $('#scrim').classList.add('on'); $('#ocrSheet').classList.add('on');
+}
+function closeOcrSettings(){$('#scrim').classList.remove('on');$('#ocrSheet').classList.remove('on');}
+function saveOcrSettings(){
+  const u=$('#ocrUrl').value.trim();
+  try{localStorage.setItem('rcptlog-ocr-url',u);localStorage.setItem('rcptlog-ocr-model',$('#ocrModel').value);}catch(e){}
+  closeOcrSettings(); toast(u?t('ocr_saved'):t('ocr_cleared'));
+}
+
 /* ════════════════════════ 語言（機制保留） ════════════════════════ */
 function applyLang(){
   document.documentElement.lang = lang==='zh' ? 'zh-Hant' : lang;
@@ -829,10 +923,13 @@ function toast(m){const el=$('#toast');el.textContent=m;el.classList.add('on');c
 $('#fab').onclick=openNew;
 $('#btnSave').onclick=saveDraft; $('#btnCancel').onclick=closeSheet; $('#btnDel').onclick=delDraft;
 $('#schemaSave').onclick=saveSchemaEdit; $('#schemaCancel').onclick=closeSchemaEditor;
-$('#scrim').onclick=()=>{closeSheet();closeSchemaEditor();closeFeedback();};
+$('#scrim').onclick=()=>{closeSheet();closeSchemaEditor();closeFeedback();closeOcrSettings();};
 $('#fCam').onchange=e=>{addPhotos([...e.target.files]);e.target.value='';};
 $('#fLib').onchange=e=>{addPhotos([...e.target.files]);e.target.value='';};
 $('#btnOCR').onclick=pasteAndParseOCR;
+$('#btnScan').onclick=scanPhoto;
+$('#ocrSetup').onclick=openOcrSettings;
+$('#ocrSave').onclick=saveOcrSettings; $('#ocrCancel').onclick=closeOcrSettings;
 document.querySelectorAll('.tab').forEach(el=>el.onclick=()=>{state.view=el.dataset.view;render();});
 $('#q').oninput=e=>{state.q=e.target.value;render();};
 $('#qclr').onclick=()=>{state.q='';$('#q').value='';render();};
@@ -894,6 +991,7 @@ window.__app={
   async setSchema(fields){state.schema=fields.map(f=>({...f}));await saveSchema(state.schema);render();return state.schema;},
   diagnostics(){return buildDiagnostics();}, openFeedback,
   parseOCR(text){return {amount:guessAmount(text), date:guessDate(text)};},
+  cloudFill(values,rawText){return applyCloudOCR(values,rawText);},
   async reload(){state.records=await dbAll();state.schema=await loadSchema();render();return state.records.length;},
   async wipe(){const all=await dbAll();for(const r of all)await dbDel(r.id);state.records=[];render();return 0;}
 };
