@@ -134,6 +134,10 @@
   .money-wrap{position:relative}
   .money-wrap::before{content:"$";position:absolute;left:13px;top:50%;transform:translateY(-50%);font:600 15px var(--mono);color:var(--muted);pointer-events:none}
   .money-wrap .inp{padding-left:26px;font-family:var(--mono)}
+  .lblrow{display:flex;align-items:center;gap:8px;margin:0 2px 6px}
+  .lblrow label{margin:0}
+  .ocrbtn{margin-left:auto;font:600 12px var(--sans);color:var(--terra2);background:#f6ecdd;border:1.5px solid #e2c79c;border-radius:9px;padding:6px 11px;cursor:pointer;white-space:nowrap}
+  .ocrbtn:active{background:#eaddc6}
 
   .photobtns{display:flex;gap:9px;margin-bottom:10px}
   .photobtns label{flex:1;text-align:center;font:600 14px var(--sans);color:var(--terra2);
@@ -252,8 +256,11 @@
   </div>
   <div id="formFields"></div>
   <div class="field">
-    <label data-i18n="lbl_raw">原始文字 / OCR（選填）</label>
-    <textarea class="inp" id="fRaw" data-i18n-ph="ph_raw" placeholder="之後可接 iOS 捷徑 Live Text 自動回填；現在可手貼單據文字"></textarea>
+    <div class="lblrow">
+      <label data-i18n="lbl_raw">原始文字 / OCR（選填）</label>
+      <button type="button" class="ocrbtn" id="btnOCR" data-i18n="btn_ocr">📋 貼上 OCR 並解析</button>
+    </div>
+    <textarea class="inp" id="fRaw" data-i18n-ph="ph_raw" placeholder="跑 iOS 捷徑「擷取文字」後回來按上面鈕；或長按貼上單據文字再按解析"></textarea>
   </div>
   <div class="acts">
     <button class="cancel" id="btnCancel" data-i18n="btn_cancel">取消</button>
@@ -329,7 +336,10 @@ const STR = {
     m_imp:'📥 匯入 JSON 還原', m_howto:'📲 怎麼放上 iPhone 離線用？',
     fab:'＋ 拍單據', f_new:'拍單據', f_edit:'編輯單據',
     lbl_photo:'照片', btn_cam:'📷 拍照', btn_lib:'🖼 相簿',
-    lbl_raw:'原始文字 / OCR（選填）', ph_raw:'之後可接 iOS 捷徑 Live Text 自動回填；現在可手貼單據文字',
+    lbl_raw:'原始文字 / OCR（選填）', ph_raw:'跑 iOS 捷徑「擷取文字」後回來按上面鈕；或長按貼上單據文字再按解析',
+    btn_ocr:'📋 貼上 OCR 並解析',
+    ocr_filled:'已從 OCR 帶入：', ocr_parsed_nofill:'已貼上文字，金額/日期沒抓到、請手動校填',
+    ocr_none:'剪貼簿沒有文字，可長按貼到下框再按一次', ocr_review:'（OCR 為輔助，務必核對金額）',
     btn_cancel:'取消', btn_del:'刪除', btn_save:'儲存',
     schema_title:'編輯欄位', schema_sub:'這張表單是活的',
     schema_note:'照片、拍照時間、原始文字是每筆固定內建。下面是你自訂的欄位 —— 增刪改、調順序都會即時存本機。',
@@ -748,6 +758,64 @@ function sendFeedback(){
   closeFeedback(); toast(t('toast_fb_sent'));
 }
 
+/* ════════════════════════ OCR 解析（best-effort；認 type 不認 label；雲端 vision 之後接同一個 applyOCR 入口） ════════════════════════ */
+/* 多國千分位/小數啟發式：最後一個分隔後 1-2 位視為小數，否則全當千分位（印尼 78.000→78000、歐式 1.280,50→1280.5、美式 1,280.00→1280） */
+function normNum(s){
+  s=String(s||'').replace(/[^\d.,]/g,'');
+  if(!s) return NaN;
+  const lastSep=Math.max(s.lastIndexOf('.'),s.lastIndexOf(','));
+  if(lastSep>=0){
+    const dec=s.length-lastSep-1;
+    if(dec>=1 && dec<=2){
+      const intp=s.slice(0,lastSep).replace(/[.,]/g,''), decp=s.slice(lastSep+1);
+      return parseFloat((intp||'0')+'.'+decp);
+    }
+  }
+  return parseFloat(s.replace(/[.,]/g,''));
+}
+function guessAmount(tx){
+  if(!tx) return null;
+  // 只認「最終金額」關鍵字（排除小計/subtotal），多個命中取最大（合計通常≥小計）
+  const kwAll=[...tx.matchAll(/(?:合計|總計|总计|金額|金额|total|amount|jumlah|grand\s*total|sum)\D{0,15}?(\d[\d.,\s]*\d|\d)/ig)]
+    .map(x=>normNum(x[1])).filter(n=>isFinite(n)&&n>0);
+  if(kwAll.length) return Math.max(...kwAll);
+  const all=[...tx.matchAll(/\d[\d.,]*\d|\d/g)].map(x=>normNum(x[0])).filter(n=>isFinite(n)&&n>0);
+  return all.length ? Math.max(...all) : null;
+}
+function guessDate(tx){
+  if(!tx) return null;
+  let m=tx.match(/(20\d{2})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/);
+  if(m) return m[1]+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[3]).padStart(2,'0');
+  m=tx.match(/(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(20\d{2}|\d{2})/);
+  if(m){const y=m[3].length===2?'20'+m[3]:m[3]; const a=+m[1],b=+m[2];
+    const day=a>12?a:(b>12?b:a), mon=a>12?b:(b>12?a:b);
+    return y+'-'+String(mon).padStart(2,'0')+'-'+String(day).padStart(2,'0');}
+  return null;
+}
+/* 灌進表單：認 type 填第一個 money/date 空格（空格才填，不蓋人已填的）。雲端回結構化 {fields} 也擴充走這裡 */
+function applyOCR(text){
+  const filled=[];
+  const amt=guessAmount(text);
+  const mf=state.schema.find(f=>f.type==='money');
+  if(amt!=null&&mf){const el=document.querySelector('#formFields [data-fid="'+mf.fid+'"]');if(el&&!el.value){el.value=String(amt);filled.push(mf.label);}}
+  const dt=guessDate(text);
+  const df=state.schema.find(f=>f.type==='date');
+  if(dt&&df){const el=document.querySelector('#formFields [data-fid="'+df.fid+'"]');if(el&&!el.value){el.value=dt;filled.push(df.label);}}
+  return {filled, amount:amt, date:dt};
+}
+async function pasteAndParseOCR(){
+  if(!draft) return;
+  let pasted=false;
+  try{const txt=await navigator.clipboard.readText();
+    if(txt&&txt.trim()){const cur=$('#fRaw').value.trim();$('#fRaw').value=(cur?cur+'\n':'')+txt.trim();pasted=true;}
+  }catch(e){}
+  draft.rawText=$('#fRaw').value;
+  const res=applyOCR(draft.rawText);
+  if(res.filled.length) toast(t('ocr_filled')+res.filled.join('、')+t('ocr_review'));
+  else if(pasted) toast(t('ocr_parsed_nofill'));
+  else toast(t('ocr_none'));
+}
+
 /* ════════════════════════ 語言（機制保留） ════════════════════════ */
 function applyLang(){
   document.documentElement.lang = lang==='zh' ? 'zh-Hant' : lang;
@@ -764,6 +832,7 @@ $('#schemaSave').onclick=saveSchemaEdit; $('#schemaCancel').onclick=closeSchemaE
 $('#scrim').onclick=()=>{closeSheet();closeSchemaEditor();closeFeedback();};
 $('#fCam').onchange=e=>{addPhotos([...e.target.files]);e.target.value='';};
 $('#fLib').onchange=e=>{addPhotos([...e.target.files]);e.target.value='';};
+$('#btnOCR').onclick=pasteAndParseOCR;
 document.querySelectorAll('.tab').forEach(el=>el.onclick=()=>{state.view=el.dataset.view;render();});
 $('#q').oninput=e=>{state.q=e.target.value;render();};
 $('#qclr').onclick=()=>{state.q='';$('#q').value='';render();};
@@ -824,6 +893,7 @@ window.__app={
   },
   async setSchema(fields){state.schema=fields.map(f=>({...f}));await saveSchema(state.schema);render();return state.schema;},
   diagnostics(){return buildDiagnostics();}, openFeedback,
+  parseOCR(text){return {amount:guessAmount(text), date:guessDate(text)};},
   async reload(){state.records=await dbAll();state.schema=await loadSchema();render();return state.records.length;},
   async wipe(){const all=await dbAll();for(const r of all)await dbDel(r.id);state.records=[];render();return 0;}
 };
