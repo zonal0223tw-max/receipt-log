@@ -1,7 +1,6 @@
 /* 單據記錄器 · service worker
-   單檔工具：只快取殼（index.html / manifest / icon），單據與照片在 IndexedDB 不經這裡。
-   策略：殼 cache-first（離線秒開），其餘 network-first 退回快取。 */
-const CACHE = 'rcptlog-v1';
+   殼快取 + HTML network-first（迭代期不卡舊版，離線才回快取）。單據與照片在 IndexedDB 不經這裡。 */
+const CACHE = 'rcptlog-v2';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
@@ -18,11 +17,25 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request).then(hit =>
-      hit || fetch(e.request).then(resp => {
+  const req = e.request;
+  const isHTML = req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html');
+  if (isHTML) {
+    // network-first：有網路永遠拿最新版（迭代期不卡舊快取），離線才回快取
+    e.respondWith(
+      fetch(req).then(resp => {
         const copy = resp.clone();
-        caches.open(CACHE).then(c => c.put(e.request, copy)).catch(()=>{});
+        caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{});
+        return resp;
+      }).catch(() => caches.match(req).then(h => h || caches.match('./index.html')))
+    );
+    return;
+  }
+  // 其餘殼資源：cache-first（離線秒開）
+  e.respondWith(
+    caches.match(req).then(hit =>
+      hit || fetch(req).then(resp => {
+        const copy = resp.clone();
+        caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{});
         return resp;
       }).catch(() => caches.match('./index.html'))
     )
