@@ -1,0 +1,8 @@
+name = "receipt-ocr"
+main = "receipt-ocr.js"
+compatibility_date = "2025-06-01"
+
+# 非機密設定（key 不在這，走 wrangler secret put）
+[vars]
+ALLOWED_ORIGIN = "https://zonal0223tw-max.github.io"
+GATEWAY_URL = "https://gateway.ai.cloudflare.com/v1/71b77f3e3eb21f24fb737759e5646c3d/default/anthropic"
